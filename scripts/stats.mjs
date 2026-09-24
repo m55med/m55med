@@ -11,6 +11,18 @@ import { doc, card, REDUCED_MOTION } from './lib/svg.mjs';
 const LOGIN = process.env.PROFILE_LOGIN || 'm55med';
 const TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
 if (!TOKEN) throw new Error('Set GITHUB_TOKEN (or GH_TOKEN) to query the GraphQL API.');
+// Days (today, streaks, the year) follow the owner's clock, not the CI runner's. GitHub buckets the
+// calendar by the requester's time zone — UTC for the Actions token unless the header says otherwise.
+const TZ = process.env.PROFILE_TZ || 'Africa/Cairo';
+
+const localDate = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d); // YYYY-MM-DD
+const offset = (d) =>
+  new Intl.DateTimeFormat('en-US', { timeZone: TZ, timeZoneName: 'longOffset' })
+    .formatToParts(d).find((p) => p.type === 'timeZoneName').value.replace('GMT', '') || '+00:00';
+// With an explicit range GitHub ignores the Time-Zone header and buckets days by the offset
+// written in `to`, so express "now" as local wall time with its offset.
+const localIso = (d) =>
+  `${localDate(d)}T${new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(d)}${offset(d)}`;
 
 const OUT = new URL('../dist/', import.meta.url);
 fs.mkdirSync(OUT, { recursive: true });
@@ -18,7 +30,12 @@ fs.mkdirSync(OUT, { recursive: true });
 async function gql(query, variables) {
   const res = await fetch('https://api.github.com/graphql', {
     method: 'POST',
-    headers: { Authorization: `bearer ${TOKEN}`, 'Content-Type': 'application/json', 'User-Agent': `${LOGIN}-profile` },
+    headers: {
+      Authorization: `bearer ${TOKEN}`,
+      'Content-Type': 'application/json',
+      'User-Agent': `${LOGIN}-profile`,
+      'Time-Zone': TZ,
+    },
     body: JSON.stringify({ query, variables }),
   });
   const json = await res.json();
@@ -38,16 +55,18 @@ const YEAR_QUERY = `query($login: String!, $from: DateTime!, $to: DateTime!) {
 async function load() {
   const { user } = await gql('query($login: String!) { user(login: $login) { createdAt } }', { login: LOGIN });
   const now = new Date();
-  const thisYear = now.getUTCFullYear();
+  const today = localDate(now);
+  const thisYear = Number(today.slice(0, 4));
   const years = [];
-  for (let y = new Date(user.createdAt).getUTCFullYear(); y <= thisYear; y++) {
-    const to = y === thisYear ? now.toISOString() : `${y}-12-31T23:59:59Z`;
-    const { user: u } = await gql(YEAR_QUERY, { login: LOGIN, from: `${y}-01-01T00:00:00Z`, to });
+  for (let y = Number(localDate(new Date(user.createdAt)).slice(0, 4)); y <= thisYear; y++) {
+    const start = `${y}-01-01T00:00:00${offset(new Date(`${y}-01-01T12:00:00Z`))}`;
+    const to = y === thisYear ? localIso(now) : `${y}-12-31T23:59:59${offset(new Date(`${y}-12-31T12:00:00Z`))}`;
+    const { user: u } = await gql(YEAR_QUERY, { login: LOGIN, from: start, to });
     years.push({ year: y, ...u.contributionsCollection });
   }
   const days = years
     .flatMap((y) => y.contributionCalendar.weeks.flatMap((w) => w.contributionDays))
-    .filter((d) => d.date <= now.toISOString().slice(0, 10))
+    .filter((d) => d.date <= today)
     .sort((a, b) => a.date.localeCompare(b.date));
   const current = years.at(-1);
   return {
