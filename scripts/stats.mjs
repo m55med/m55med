@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { themes } from './lib/theme.mjs';
 import { F, Typesetter, measure, capHeight } from './lib/type.mjs';
 import { lineIcon } from './lib/icons.mjs';
-import { doc, card } from './lib/svg.mjs';
+import { doc, card, REDUCED_MOTION } from './lib/svg.mjs';
 
 const LOGIN = process.env.PROFILE_LOGIN || 'm55med';
 const TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
@@ -132,20 +132,28 @@ function streakCard(t, data) {
   const ts = new Typesetter('g');
   const c = card(t, { id: 'c', w: W, h: H, accent: 'mobile' });
   const { current, longest } = streaks(data.days);
-  const active = data.days.filter((d) => d.date.startsWith(String(data.year)) && d.contributionCount > 0).length;
+  const thisYear = data.days.filter((d) => d.date.startsWith(String(data.year)));
+  const active = thisYear.filter((d) => d.contributionCount > 0).length;
+  const today = data.days.at(-1);
+  const plural = (n, one, many) => (n === 1 ? one : many);
+  // Private work is reported without a type breakdown, so "today" counts every contribution
+  // (commits, PRs, issues) — for this profile that is almost entirely commits.
   const cols = [
-    ['CURRENT', current.len, range(current)],
-    ['LONGEST', longest.len, range(longest)],
-    [`ACTIVE ${data.year}`, active, 'days with commits'],
+    ['TODAY', today.contributionCount, plural(today.contributionCount, 'contribution', 'contributions'), shortDate(today.date)],
+    ['STREAK', current.len, plural(current.len, 'day in a row', 'days in a row'), range(current)],
+    ['LONGEST', longest.len, plural(longest.len, 'day in a row', 'days in a row'), range(longest)],
+    ['ACTIVE DAYS', active, `of ${thisYear.length} days`, `in ${data.year} · ${Math.round((100 * active) / thisYear.length)}%`],
   ];
   let body = c.svg;
-  cols.forEach(([label, value, sub], i) => {
-    const x = 20 + i * 127;
-    body += ts.text(label, { font: F.jb500, size: 10, x, y: 36, ls: 1.5, fill: t.muted }).svg;
-    const v = ts.text(fmt(value), { font: F.sg700, size: 34, x, y: 78, fill: t.text });
-    body += v.svg;
-    if (i < 2) body += ts.text(value === 1 ? 'day' : 'days', { font: F.sg400, size: 13, x: x + v.width + 6, y: 78, fill: t.muted }).svg;
-    body += ts.text(sub, { font: F.jb400, size: 9.5, x, y: 98, fill: t.muted }).svg;
+  cols.forEach(([label, value, unit, sub], i) => {
+    const x = 20 + i * 92;
+    const l = ts.text(label, { font: F.jb500, size: 9.5, x, y: 36, ls: 1.2, fill: t.muted });
+    body += l.svg;
+    // A live dot beside TODAY: the card is regenerated every hour.
+    if (i === 0) body += `<circle class="live" cx="${(x + l.width + 8).toFixed(1)}" cy="32.5" r="3" fill="${t.mobile}"/>`;
+    body += ts.text(fmt(value), { font: F.sg700, size: 30, x, y: 74, fill: t.text }).svg;
+    body += ts.text(unit, { font: F.sg400, size: 11.5, x, y: 94, fill: t.muted }).svg;
+    body += ts.text(sub, { font: F.jb400, size: 9, x, y: 110, fill: t.muted }).svg;
   });
 
   // Last 30 days, same color ramp as the contribution snake.
@@ -153,15 +161,16 @@ function streakCard(t, data) {
   const max = Math.max(1, ...last.map((d) => d.contributionCount));
   const level = (n) => (n === 0 ? 0 : Math.min(4, 1 + Math.floor((3 * n) / max)));
   body += last
-    .map((d, i) => `<rect x="${20 + i * 12}" y="122" width="10" height="10" rx="2.5" fill="${t.heat[level(d.contributionCount)]}"/>`)
+    .map((d, i) => `<rect x="${20 + i * 12}" y="128" width="10" height="10" rx="2.5" fill="${t.heat[level(d.contributionCount)]}"/>`)
     .join('');
-  body += ts.text('last 30 days', { font: F.jb400, size: 9.5, x: 20, y: 152, fill: t.muted }).svg;
-  body += ts.text('today', { font: F.jb400, size: 9.5, x: 380, y: 152, anchor: 'end', fill: t.muted }).svg;
+  body += ts.text('last 30 days', { font: F.jb400, size: 9.5, x: 20, y: 158, fill: t.muted }).svg;
+  body += ts.text('today', { font: F.jb400, size: 9.5, x: 380, y: 158, anchor: 'end', fill: t.muted }).svg;
 
   return doc({
     w: W, h: H, ts, defs: c.defs, body,
-    title: `Current streak ${current.len} days, longest ${longest.len} days`,
-    desc: `Current streak: ${current.len} days. Longest streak: ${longest.len} days. Active days in ${data.year}: ${active}.`,
+    css: '.live{animation:live 2s ease-in-out infinite}@keyframes live{50%{opacity:.25}}' + REDUCED_MOTION,
+    title: `${today.contributionCount} contributions today, ${current.len}-day streak`,
+    desc: `Today: ${today.contributionCount} contributions. Current streak: ${current.len} days in a row. Longest streak: ${longest.len} days in a row. Active on ${active} of ${thisYear.length} days in ${data.year}.`,
   });
 }
 
