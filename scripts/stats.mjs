@@ -209,5 +209,7 @@ if (process.env.GITHUB_OUTPUT) {
   fs.appendFileSync(process.env.GITHUB_OUTPUT, `snake_dark=${snake(themes.dark)}\nsnake_light=${snake(themes.light)}\n`);
 }
 
+
+
 const { current, longest } = streaks(data.days);
 console.log(`${data.year}: ${data.total} contributions (${data.restricted} private); streak ${current.len} (longest ${longest.len})`);
